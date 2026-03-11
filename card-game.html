@@ -10,7 +10,10 @@
   button{padding:10px 16px;background:#2ecc71;color:white;border:none;border-radius:6px;margin:5px;cursor:pointer}
   button:disabled{background:#ccc}
   input{padding:8px;width:120px}
-  .card{width:50px;height:70px;background:white;border:2px solid #2ecc71;display:inline-flex;align-items:center;justify-content:center;font-size:20px;margin:3px;border-radius:6px}
+  /* 自己的手牌（背面样式） */
+  .my-card{width:50px;height:70px;background:#2ecc71;border:2px solid #27ae60;display:inline-flex;align-items:center;justify-content:center;font-size:20px;margin:3px;border-radius:6px;color:white;font-weight:bold}
+  /* 对手的手牌（正常显示） */
+  .opponent-card{width:50px;height:70px;background:white;border:2px solid #2ecc71;display:inline-flex;align-items:center;justify-content:center;font-size:20px;margin:3px;border-radius:6px}
   .status-text{color:#ff6700;font-weight:bold;margin:10px 0}
 </style>
 </head>
@@ -25,7 +28,10 @@
 </div>
 
 <div class="panel">
-  我的手牌：<div id="my"></div>
+  <!-- 自己的手牌（显示背面） -->
+  我的手牌（背面）：<div id="my"></div>
+  <!-- 对手的手牌（显示真实数字） -->
+  对手的手牌：<div id="opponent"></div>
   已打出：<div id="played"></div>
   <br>
   猜数字：<select id="num">
@@ -38,18 +44,19 @@
 </div>
 
 <script>
-  // 全局变量（已修复所有报错）
+  // 全局变量
   let roomInput = document.getElementById('room');
   let statusText = document.getElementById('status');
-  let myHand = [];
+  let myHand = []; // 自己的手牌（后台记录，不显示数字）
+  let opponentHand = []; // 对手的手牌（显示真实数字）
   let played = [];
   let deck = [];
   let ws = null;
-  let wsReady = false; // 标记WebSocket是否连接就绪
-  let isOpponentJoined = false; // 标记对手是否加入
-  let roomId = ""; // 全局房间ID
+  let wsReady = false;
+  let isOpponentJoined = false;
+  let roomId = "";
 
-  // 1. 初始化36张牌库（1+2+3+4+5+6+7+8 = 36）
+  // 初始化36张牌库
   function makeDeck() {
     let d = [];
     for(let n=1;n<=8;n++){
@@ -58,56 +65,56 @@
     return d.sort(()=>Math.random()-0.5);
   }
 
-  // 2. 连接国内可用的WebSocket服务器（修复证书/域名问题）
+  // 连接WebSocket服务器
   function connect(){
-    // 先关闭旧连接，避免重复连接
     if(ws) {
       ws.close();
     }
-    
-    // 国内稳定的服务器（无证书错误）
     ws = new WebSocket('wss://ws.ifelse.io/');
     
-    // 连接成功触发（修复CONNECTING状态报错）
     ws.onopen = function() {
       wsReady = true;
       statusText.textContent = "WebSocket连接成功！";
     };
     
-    // 接收消息（修复JSON解析报错）
     ws.onmessage = e => {
       let data;
       try {
-        // 容错处理：先尝试解析JSON
         data = JSON.parse(e.data);
       } catch (err) {
-        // 解析失败时不报错，仅打印日志
-        console.log("收到非JSON数据（正常）：", e.data);
+        console.log("收到非JSON数据：", e.data);
         statusText.textContent = "已连接，等待对手操作...";
         return;
       }
 
-      // 处理房间创建/加入逻辑
+      // 处理房间创建/加入
       if(data.type === 'create' && data.room === roomId) {
         statusText.textContent = `房间${roomId}已创建，等待对手加入`;
       }
       if(data.type === 'join' && data.room === roomId) {
         isOpponentJoined = true;
-        statusText.textContent = `对手已加入房间${roomId}，游戏开始！`;
-        // 初始化牌库和手牌
+        // 初始化自己的手牌（后台记录）+ 对手的手牌（显示）
         deck = makeDeck();
         myHand = deck.splice(0,5);
-        showMy();
+        opponentHand = deck.splice(0,5); // 对手手牌随机生成（联机时可同步）
+        showMyHand(); // 显示自己的手牌背面
+        showOpponentHand(); // 显示对手的真实手牌
+        statusText.textContent = `对手已加入房间${roomId}，游戏开始！`;
       }
-      // 处理出牌同步
+      // 处理出牌同步（对手出牌后更新显示）
       if(data.type === 'play' && data.room === roomId) {
         played.push({num: data.card, count: data.count});
         showPlayed();
+        // 对手出牌后减少其手牌
+        for(let i=0;i<data.count;i++){
+          let idx = opponentHand.indexOf(data.card);
+          opponentHand.splice(idx,1);
+        }
+        showOpponentHand();
         statusText.textContent = "对手已出牌！";
       }
     };
 
-    // 连接失败/关闭处理
     ws.onerror = function() {
       wsReady = false;
       statusText.textContent = "连接失败！请先访问 https://ws.ifelse.io/ 放行证书";
@@ -118,7 +125,7 @@
     };
   }
 
-  // 3. 创建房间（修复CONNECTING状态发送消息报错）
+  // 创建房间
   function createRoom() {
     roomId = roomInput.value.trim();
     if(!roomId) {
@@ -127,7 +134,6 @@
     }
     connect();
     
-    // 轮询等待连接就绪后再发送消息（核心修复）
     let checkInterval = setInterval(() => {
       if(wsReady) {
         clearInterval(checkInterval);
@@ -137,7 +143,7 @@
     }, 100);
   }
 
-  // 4. 加入房间（同理修复）
+  // 加入房间
   function joinRoom() {
     roomId = roomInput.value.trim();
     if(!roomId) {
@@ -151,19 +157,21 @@
         clearInterval(checkInterval);
         ws.send(JSON.stringify({type:'join', room: roomId}));
         statusText.textContent = `加入房间${roomId}中...`;
-        // 自动初始化游戏（适配回声服务器特性）
+        // 初始化手牌
         setTimeout(() => {
           isOpponentJoined = true;
           deck = makeDeck();
           myHand = deck.splice(0,5);
-          showMy();
+          opponentHand = deck.splice(0,5);
+          showMyHand();
+          showOpponentHand();
           statusText.textContent = `已加入房间${roomId}，游戏开始！`;
         }, 800);
       }
     }, 100);
   }
 
-  // 5. 出牌逻辑（加房间ID防串房）
+  // 出牌逻辑（自己看不到手牌，但后台能判断）
   function play() {
     if(!isOpponentJoined) {
       alert("对手还没加入，请先等对手连接！");
@@ -176,19 +184,20 @@
     
     let n = parseInt(num.value);
     let c = parseInt(cnt.value);
+    // 后台统计自己手牌中对应数字的数量（不显示给玩家）
     let count = myHand.filter(x=>x==n).length;
     
     if(count >= c) {
-      // 本地出牌逻辑
+      // 本地出牌（后台减少手牌）
       for(let i=0;i<c;i++){
         let idx = myHand.indexOf(n);
         myHand.splice(idx,1);
       }
       played.push({num:n,count:c});
-      showMy();
+      showMyHand(); // 更新自己的手牌背面数量
       showPlayed();
       
-      // 发送出牌消息（带房间ID）
+      // 发送出牌消息
       ws.send(JSON.stringify({
         type:'play', 
         room: roomId,
@@ -197,33 +206,68 @@
       }));
       statusText.textContent = `已打出${c}张${n}，等待对手...`;
     } else {
-      alert(`你只有${count}张${n}，无法打出${c}张！`);
+      alert(`你没有${c}张${n}！（后台检测）`);
     }
   }
 
-  // 6. 结束回合补牌
+  // 结束回合补牌
   function endTurn() {
     if(!isOpponentJoined) {
       alert("对手还没加入！");
       return;
     }
 
-    // 补牌至5张
+    // 补牌至5张（后台补，显示背面）
     while(myHand.length <5 && deck.length>0) {
       myHand.push(deck.pop());
     }
-    showMy();
+    // 对手同步补牌
+    while(opponentHand.length <5 && deck.length>0) {
+      opponentHand.push(deck.pop());
+    }
+    showMyHand();
+    showOpponentHand();
     statusText.textContent = `回合结束，已补牌！当前手牌${myHand.length}张`;
   }
 
-  // 7. 显示我的手牌
-  function showMy() {
-    my.innerHTML = myHand.map(x=>`<div class='card'>${x}</div>`).join('');
+  // 显示自己的手牌（背面，只显示数量，看不到数字）
+  function showMyHand() {
+    let myEl = document.getElementById('my');
+    myEl.innerHTML = "";
+    myHand.forEach(() => {
+      // 自己的手牌显示「背」字，看不到数字
+      myEl.innerHTML += `<div class='my-card'>背</div>`;
+    });
+    if(myHand.length === 0) {
+      myEl.innerHTML = "无手牌";
+    }
   }
 
-  // 8. 显示已打出的牌
+  // 显示对手的手牌（真实数字）
+  function showOpponentHand() {
+    let opponentEl = document.getElementById('opponent');
+    opponentEl.innerHTML = "";
+    opponentHand.forEach(num => {
+      // 对手的手牌显示真实数字
+      opponentEl.innerHTML += `<div class='opponent-card'>${num}</div>`;
+    });
+    if(opponentHand.length === 0) {
+      opponentEl.innerHTML = "无手牌";
+    }
+  }
+
+  // 显示已打出的牌
   function showPlayed() {
-    played.innerHTML = played.map(x=>`<div class='card'>${x.num}</div>`).join('');
+    let playedEl = document.getElementById('played');
+    playedEl.innerHTML = "";
+    played.forEach(x=>{
+      for(let i=0;i<x.count;i++){
+        playedEl.innerHTML += `<div class='opponent-card'>${x.num}</div>`;
+      }
+    });
+    if(played.length === 0) {
+      playedEl.innerHTML = "无";
+    }
   }
 </script>
 </body>
