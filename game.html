@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>出包魔法师 - Abraca What</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Arial', sans-serif;
+        }
+        body {
+            background: #f0f8ff;
+            padding: 20px;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        .game-container {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .game-info {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 5px;
+        }
+        .player-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .player-card {
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            position: relative;
+        }
+        .player-card.active {
+            border-color: #28a745;
+            background: #f0fff4;
+        }
+        .spell-stones {
+            display: flex;
+            gap: 5px;
+            margin: 10px 0;
+            flex-wrap: wrap;
+        }
+        .stone {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #6c757d;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .stone.unknown {
+            background: #343a40;
+            color: transparent;
+            border: 2px dashed #6c757d;
+        }
+        .stone.used {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .action-area {
+            border-top: 1px solid #ddd;
+            padding-top: 20px;
+        }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        .btn-primary {
+            background: #007bff;
+            color: white;
+        }
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+        .log-area {
+            margin-top: 20px;
+            height: 200px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+            overflow-y: auto;
+            background: #f8f9fa;
+        }
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            max-width: 500px;
+            width: 90%;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <div class="header">
+            <h1>出包魔法师</h1>
+            <p>Abraca What | 先获得8分者获胜</p>
+        </div>
+
+        <div class="game-info">
+            <div>
+                <strong>当前回合:</strong> <span id="current-player">无</span>
+            </div>
+            <div>
+                <strong>公共咒语石剩余:</strong> <span id="public-stones">36</span>
+            </div>
+            <div>
+                <strong>最高分:</strong> <span id="max-score">0</span>
+            </div>
+        </div>
+
+        <div class="player-list" id="player-list">
+            <!-- 玩家卡片会动态生成 -->
+        </div>
+
+        <div class="action-area">
+            <div>
+                <strong>施法操作:</strong>
+                <select id="magic-select" disabled>
+                    <option value="1">1号 - 古代巨龙</option>
+                    <option value="2">2号 - 黑暗幽灵</option>
+                    <option value="3">3号 - 甜蜜的梦</option>
+                    <option value="4">4号 - 魔法护盾</option>
+                    <option value="5">5号 - 闪电暴风雨</option>
+                    <option value="6">6号 - 暴风雪</option>
+                    <option value="7">7号 - 火球术</option>
+                    <option value="8">8号 - 魔法药水</option>
+                </select>
+                <button class="btn btn-primary" id="cast-btn" disabled>施放魔法</button>
+                <button class="btn btn-danger" id="end-turn-btn" disabled>结束回合</button>
+            </div>
+            <div style="margin-top: 10px;">
+                <button class="btn btn-success" id="join-game-btn">加入游戏</button>
+                <button class="btn btn-primary" id="start-game-btn" disabled>开始游戏</button>
+            </div>
+        </div>
+
+        <div class="log-area" id="game-log">
+            欢迎来到出包魔法师！点击"加入游戏"开始...
+        </div>
+    </div>
+
+    <!-- 胜利弹窗 -->
+    <div class="modal hidden" id="win-modal">
+        <div class="modal-content">
+            <h2 id="win-message">恭喜你获胜！</h2>
+            <button class="btn btn-primary" id="restart-btn" style="margin-top: 20px;">重新开始</button>
+        </div>
+    </div>
+
+    <script>
+        // 游戏核心数据
+        const gameState = {
+            players: [],
+            currentPlayerIndex: -1,
+            publicStones: 36,
+            stonePool: [1,2,2,3,3,3,4,4,4,4,5,5,5,5,5,6,6,6,6,6,6,7,7,7,7,7,7,7,8,8,8,8,8,8,8,8],
+            magicEffects: {
+                1: "所有玩家失去1点生命",
+                2: "其他玩家各-1生命，你+1生命",
+                3: "掷骰恢复生命（1–2=+1；3–4=+2；5–6=+3）",
+                4: "额外+1分（本轮结束结算）",
+                5: "左右邻居各-1生命",
+                6: "暴风雪：左边玩家-1生命",
+                7: "火球术：右边玩家-1生命",
+                8: "魔法药水：你+1生命"
+            },
+            ws: null,
+            myPlayerId: null,
+            lastCastNumber: 0 // 记录当前回合最后一次施法的数字（用于限制只能升不降）
+        };
+
+        // WebSocket 初始化
+        function initWebSocket() {
+            // 使用公共WebSocket服务器
+            const wsUrl = "wss://echo.websocket.events";
+            gameState.ws = new WebSocket(wsUrl);
+
+            gameState.ws.onopen = () => {
+                addLog("已连接到游戏服务器");
+                document.getElementById("join-game-btn").disabled = false;
+            };
+
+            gameState.ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleGameMessage(data);
+                } catch (e) {
+                    addLog("收到无效消息: " + event.data);
+                }
+            };
+
+            gameState.ws.onclose = () => {
+                addLog("与服务器断开连接，正在重连...");
+                setTimeout(initWebSocket, 3000);
+            };
+
+            gameState.ws.onerror = (error) => {
+                addLog("连接错误: " + error);
+            };
+        }
+
+        // 处理游戏消息
+        function handleGameMessage(data) {
+            switch(data.type) {
+                case "playerJoined":
+                    addLog(`玩家 ${data.player.name} 加入游戏`);
+                    gameState.players.push(data.player);
+                    renderPlayers();
+                    if (gameState.players.length >= 2) {
+                        document.getElementById("start-game-btn").disabled = false;
+                    }
+                    break;
+                case "gameStarted":
+                    addLog("游戏开始！");
+                    gameState.currentPlayerIndex = 0;
+                    updateGameInfo();
+                    renderPlayers();
+                    enablePlayerActions(gameState.players[0].id);
+                    break;
+                case "castMagic":
+                    handleCastMagic(data);
+                    break;
+                case "playerTurnEnded":
+                    endPlayerTurn(data.playerId);
+                    break;
+                case "gameWon":
+                    showWinModal(data.winner);
+                    break;
+            }
+        }
+
+        // 发送游戏消息
+        function sendGameMessage(type, data) {
+            if (gameState.ws.readyState === WebSocket.OPEN) {
+                gameState.ws.send(JSON.stringify({
+                    type: type,
+                    ...data
+                }));
+            } else {
+                addLog("无法发送消息：未连接到服务器");
+            }
+        }
+
+        // 加入游戏
+        document.getElementById("join-game-btn").addEventListener("click", () => {
+            const playerName = prompt("请输入你的游戏昵称：", "魔法师" + Math.floor(Math.random() * 100));
+            if (!playerName) return;
+
+            gameState.myPlayerId = Date.now().toString();
+            const player = {
+                id: gameState.myPlayerId,
+                name: playerName,
+                life: 6,
+                score: 0,
+                stones: [],
+                usedStones: []
+            };
+
+            // 随机分配5个咒语石（自己看不见）
+            for (let i = 0; i < 5; i++) {
+                const randomIndex = Math.floor(Math.random() * gameState.stonePool.length);
+                player.stones.push(gameState.stonePool.splice(randomIndex, 1)[0]);
+                gameState.publicStones--;
+            }
+
+            gameState.players.push(player);
+            renderPlayers();
+            addLog(`你以 ${playerName} 的身份加入游戏`);
+            
+            sendGameMessage("playerJoined", { player });
+            
+            if (gameState.players.length >= 2) {
+                document.getElementById("start-game-btn").disabled = false;
+            }
+        });
+
+        // 开始游戏
+        document.getElementById("start-game-btn").addEventListener("click", () => {
+            sendGameMessage("gameStarted", {});
+            gameState.currentPlayerIndex = 0;
+            updateGameInfo();
+            enablePlayerActions(gameState.players[0].id);
+        });
+
+        // 施放魔法
+        document.getElementById("cast-btn").addEventListener("click", () => {
+            const magicNumber = parseInt(document.getElementById("magic-select").value);
+            const currentPlayer = gameState.players[gameState.currentPlayerIndex];
+
+            // 检查是否只能升不降
+            if (magicNumber < gameState.lastCastNumber && gameState.lastCastNumber > 0) {
+                addLog(`不能施放比上一次更小的魔法！上一次是 ${gameState.lastCastNumber}`);
+                return;
+            }
+
+            // 检查是否拥有该咒语石
+            const stoneIndex = currentPlayer.stones.indexOf(magicNumber);
+            if (stoneIndex !== -1) {
+                // 施法成功
+                addLog(`${currentPlayer.name} 成功施放 ${magicNumber} 号魔法：${gameState.magicEffects[magicNumber]}`);
+                
+                // 执行魔法效果
+                executeMagicEffect(magicNumber, currentPlayer);
+                
+                // 移除已使用的咒语石
+                currentPlayer.usedStones.push(currentPlayer.stones.splice(stoneIndex, 1)[0]);
+                gameState.lastCastNumber = magicNumber;
+
+                // 检查是否清空所有咒语石
+                if (currentPlayer.stones.length === 0) {
+                    addLog(`${currentPlayer.name} 清空了所有咒语石！获得3分！`);
+                    currentPlayer.score += 3;
+                    endPlayerTurn(currentPlayer.id);
+                }
+
+                sendGameMessage("castMagic", {
+                    playerId: currentPlayer.id,
+                    magicNumber: magicNumber,
+                    success: true,
+                    newScore: currentPlayer.score,
+                    newLife: currentPlayer.life
+                });
+            } else {
+                // 施法失败（出包）
+                addLog(`${currentPlayer.name} 施法失败！出包了！失去1点生命`);
+                currentPlayer.life--;
+                gameState.lastCastNumber = 0;
+
+                // 检查是否死亡
+                if (currentPlayer.life <= 0) {
+                    addLog(`${currentPlayer.name} 生命值归0！`);
+                    handlePlayerDeath(currentPlayer);
+                }
+
+                sendGameMessage("castMagic", {
+                    playerId: currentPlayer.id,
+                    magicNumber: magicNumber,
+                    success: false,
+                    newLife: currentPlayer.life
+                });
+
+                // 回合结束
+                endPlayerTurn(currentPlayer.id);
+            }
+
+            renderPlayers();
+            updateGameInfo();
+            
+            // 检查胜利条件
+            checkWinCondition();
+        });
+
+        // 执行魔法效果
+        function executeMagicEffect(magicNumber, caster) {
+            const casterIndex = gameState.players.findIndex(p => p.id === caster.id);
+            
+            switch(magicNumber) {
+                case 1: // 古代巨龙
+                    gameState.players.forEach(p => {
+                        p.life--;
+                        addLog(`${p.name} 失去1点生命，剩余 ${p.life} 点`);
+                    });
+                    break;
+                case 2: // 黑暗幽灵
+                    gameState.players.forEach(p => {
+                        if (p.id !== caster.id) {
+                            p.life--;
+                            addLog(`${p.name} 失去1点生命，剩余 ${p.life} 点`);
+                        } else {
+                            p.life++;
+                            addLog(`${p.name} 恢复1点生命，剩余 ${p.life} 点`);
+                        }
+                    });
+                    break;
+                case 3: // 甜蜜的梦
+                    const dice = Math.floor(Math.random() * 6) + 1;
+                    let heal = 1;
+                    if (dice >= 3 && dice <=4) heal = 2;
+                    if (dice >=5) heal = 3;
+                    caster.life += heal;
+                    addLog(`${caster.name} 掷出 ${dice} 点，恢复 ${heal} 点生命，剩余 ${caster.life} 点`);
+                    break;
+                case 4: // 魔法护盾
+                    caster.score++;
+                    addLog(`${caster.name} 获得1分，当前分数：${caster.score}`);
+                    break;
+                case 5: // 闪电暴风雨
+                    const leftIndex = (casterIndex - 1 + gameState.players.length) % gameState.players.length;
+                    const rightIndex = (casterIndex + 1) % gameState.players.length;
+                    gameState.players[leftIndex].life--;
+                    gameState.players[rightIndex].life--;
+                    addLog(`${gameState.players[leftIndex].name} 和 ${gameState.players[rightIndex].name} 各失去1点生命`);
+                    break;
+                case 6: // 暴风雪
+                    const leftPlayerIndex = (casterIndex - 1 + gameState.players.length) % gameState.players.length;
+                    gameState.players[leftPlayerIndex].life--;
+                    addLog(`${gameState.players[leftPlayerIndex].name} 失去1点生命，剩余 ${gameState.players[leftPlayerIndex].life} 点`);
+                    break;
+                case 7: // 火球术
+                    const rightPlayerIndex = (casterIndex + 1) % gameState.players.length;
+                    gameState.players[rightPlayerIndex].life--;
+                    addLog(`${gameState.players[rightPlayerIndex].name} 失去1点生命，剩余 ${gameState.players[rightPlayerIndex].life} 点`);
+                    break;
+                case 8: // 魔法药水
+                    caster.life++;
+                    addLog(`${caster.name} 恢复1点生命，剩余 ${caster.life} 点`);
+                    break;
+            }
+        }
+
+        // 处理玩家死亡
+        function handlePlayerDeath(player) {
+            addLog(`${player.name} 被击败！`);
+            // 击杀者获得1分，其他存活者各获得1分
+            gameState.players.forEach(p => {
+                if (p.id !== player.id) {
+                    p.score++;
+                    addLog(`${p.name} 获得1分，当前分数：${p.score}`);
+                }
+            });
+        }
+
+        // 结束玩家回合
+        function endPlayerTurn(playerId) {
+            const currentPlayer = gameState.players[gameState.currentPlayerIndex];
+            
+            // 补满咒语石
+            const stonesNeeded = 5 - currentPlayer.stones.length;
+            if (stonesNeeded > 0 && gameState.publicStones > 0) {
+                const stonesToAdd = Math.min(stonesNeeded, gameState.publicStones);
+                for (let i = 0; i < stonesToAdd; i++) {
+                    const randomIndex = Math.floor(Math.random() * gameState.stonePool.length);
+                    currentPlayer.stones.push(gameState.stonePool.splice(randomIndex, 1)[0]);
+                    gameState.publicStones--;
+                }
+                addLog(`${currentPlayer.name} 补充了 ${stonesToAdd} 个咒语石`);
+            } else if (gameState.publicStones === 0) {
+                addLog("公共咒语石已耗尽！无法补充");
+            }
+
+            // 重置最后施法数字
+            gameState.lastCastNumber = 0;
+            
+            // 切换到下一个玩家
+            gameState.currentPlayerIndex = (gameState.currentPlayerIndex + 1) % gameState.players.length;
+            const nextPlayer = gameState.players[gameState.currentPlayerIndex];
+            
+            addLog(`回合结束，现在是 ${nextPlayer.name} 的回合`);
+            
+            // 禁用当前玩家操作，启用下一个玩家操作
+            disableAllPlayerActions();
+            enablePlayerActions(nextPlayer.id);
+            
+            updateGameInfo();
+            renderPlayers();
+            
+            sendGameMessage("playerTurnEnded", { playerId });
+        }
+
+        // 检查胜利条件
+        function checkWinCondition() {
+            const winner = gameState.players.find(p => p.score >= 8);
+            if (winner) {
+                addLog(`${winner.name} 获得8分！赢得游戏胜利！`);
+                sendGameMessage("gameWon", { winner: winner.name });
+                showWinModal(winner.name);
+                disableAllPlayerActions();
+            }
+        }
+
+        // 显示胜利弹窗
+        function showWinModal(winnerName) {
+            document.getElementById("win-message").textContent = `${winnerName} 获得胜利！`;
+            document.getElementById("win-modal").classList.remove("hidden");
+        }
+
+        // 重新开始游戏
+        document.getElementById("restart-btn").addEventListener("click", () => {
+            location.reload();
+        });
+
+        // 结束回合按钮
+        document.getElementById("end-turn-btn").addEventListener("click", () => {
+            const currentPlayer = gameState.players[gameState.currentPlayerIndex];
+            endPlayerTurn(currentPlayer.id);
+        });
+
+        // 渲染玩家列表
+        function renderPlayers() {
+            const playerListEl = document.getElementById("player-list");
+            playerListEl.innerHTML = "";
+
+            gameState.players.forEach((player, index) => {
+                const isCurrentPlayer = index === gameState.currentPlayerIndex;
+                const isMyPlayer = player.id === gameState.myPlayerId;
+
+                const playerCard = document.createElement("div");
+                playerCard.className = `player-card ${isCurrentPlayer ? "active" : ""}`;
+                playerCard.innerHTML = `
+                    <h3>${player.name} ${isCurrentPlayer ? "(当前回合)" : ""}</h3>
+                    <p>生命: ${player.life} | 分数: ${player.score}</p>
+                    <div class="spell-stones">
+                        ${player.stones.map(stone => `
+                            <div class="stone ${isMyPlayer ? "unknown" : ""}">
+                                ${isMyPlayer ? "?" : stone}
+                            </div>
+                        `).join("")}
+                    </div>
+                    <p style="margin-top: 10px; font-size: 12px; color: #666;">
+                        已使用: ${player.usedStones.join(", ") || "无"}
+                    </p>
+                `;
+
+                playerListEl.appendChild(playerCard);
+            });
+        }
+
+        // 更新游戏信息
+        function updateGameInfo() {
+            document.getElementById("current-player").textContent = 
+                gameState.currentPlayerIndex >= 0 ? 
+                gameState.players[gameState.currentPlayerIndex].name : "无";
+            
+            document.getElementById("public-stones").textContent = gameState.publicStones;
+            
+            const maxScore = Math.max(...gameState.players.map(p => p.score), 0);
+            document.getElementById("max-score").textContent = maxScore;
+        }
+
+        // 启用玩家操作
+        function enablePlayerActions(playerId) {
+            if (playerId === gameState.myPlayerId) {
+                document.getElementById("magic-select").disabled = false;
+                document.getElementById("cast-btn").disabled = false;
+                document.getElementById("end-turn-btn").disabled = false;
+                addLog("现在是你的回合，可以开始施法！");
+            } else {
+                disableAllPlayerActions();
+            }
+        }
+
+        // 禁用所有玩家操作
+        function disableAllPlayerActions() {
+            document.getElementById("magic-select").disabled = true;
+            document.getElementById("cast-btn").disabled = true;
+            document.getElementById("end-turn-btn").disabled = true;
+        }
+
+        // 添加日志
+        function addLog(message) {
+            const logArea = document.getElementById("game-log");
+            const timestamp = new Date().toLocaleTimeString();
+            logArea.innerHTML += `<p>[${timestamp}] ${message}</p>`;
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        // 初始化
+        window.onload = () => {
+            initWebSocket();
+            renderPlayers();
+            updateGameInfo();
+        };
+    </script>
+</body>
+</html>
