@@ -219,7 +219,7 @@
         // WebSocket 初始化
         function initWebSocket() {
             // 使用公共WebSocket服务器
-            const wsUrl = "wss://echo.websocket.events";
+            const wsUrl = "wss://ws.postman-echo.com/raw";
             gameState.ws = new WebSocket(wsUrl);
 
             gameState.ws.onopen = () => {
@@ -609,4 +609,5 @@
         };
     </script>
 </body>
+
 </html>
