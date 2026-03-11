@@ -134,6 +134,11 @@
         .hidden {
             display: none;
         }
+        .btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
     </style>
 </head>
 <body>
@@ -178,6 +183,7 @@
             <div style="margin-top: 10px;">
                 <button class="btn btn-success" id="join-game-btn">加入游戏</button>
                 <button class="btn btn-primary" id="start-game-btn" disabled>开始游戏</button>
+                <button class="btn btn-danger" id="leave-game-btn" disabled>退出游戏</button>
             </div>
         </div>
 
@@ -212,27 +218,41 @@
                 8: "魔法药水：你+1生命"
             },
             ws: null,
-            myPlayerId: null,
-            lastCastNumber: 0 // 记录当前回合最后一次施法的数字（用于限制只能升不降）
+            myPlayerId: localStorage.getItem('magicGamePlayerId') || null, // 从本地存储读取
+            lastCastNumber: 0,
+            isGameStarted: false // 标记游戏是否已开始
         };
 
         // WebSocket 初始化
         function initWebSocket() {
-            // 使用公共WebSocket服务器
+            // 使用稳定的公共WebSocket服务器
             const wsUrl = "wss://ws.postman-echo.com/raw";
             gameState.ws = new WebSocket(wsUrl);
 
             gameState.ws.onopen = () => {
                 addLog("已连接到游戏服务器");
-                document.getElementById("join-game-btn").disabled = false;
+                // 如果已有玩家ID，禁用加入按钮
+                if (gameState.myPlayerId) {
+                    document.getElementById("join-game-btn").disabled = true;
+                    document.getElementById("leave-game-btn").disabled = false;
+                } else {
+                    document.getElementById("join-game-btn").disabled = false;
+                }
             };
 
             gameState.ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    handleGameMessage(data);
+                    // 过滤自己发送的消息，避免重复创建角色
+                    if (data.senderId && data.senderId === gameState.myPlayerId) {
+                        return;
+                    }
+                    // 只处理游戏相关消息
+                    if (data.type) {
+                        handleGameMessage(data);
+                    }
                 } catch (e) {
-                    addLog("收到无效消息: " + event.data);
+                    console.log("非游戏消息：", event.data);
                 }
             };
 
@@ -250,19 +270,29 @@
         function handleGameMessage(data) {
             switch(data.type) {
                 case "playerJoined":
-                    addLog(`玩家 ${data.player.name} 加入游戏`);
-                    gameState.players.push(data.player);
-                    renderPlayers();
-                    if (gameState.players.length >= 2) {
-                        document.getElementById("start-game-btn").disabled = false;
+                    // 检查是否已存在该玩家，避免重复
+                    const existingPlayer = gameState.players.find(p => p.id === data.player.id);
+                    if (!existingPlayer) {
+                        addLog(`玩家 ${data.player.name} 加入游戏`);
+                        gameState.players.push(data.player);
+                        renderPlayers();
+                        if (gameState.players.length >= 2 && !gameState.isGameStarted) {
+                            document.getElementById("start-game-btn").disabled = false;
+                        }
                     }
                     break;
                 case "gameStarted":
-                    addLog("游戏开始！");
-                    gameState.currentPlayerIndex = 0;
-                    updateGameInfo();
-                    renderPlayers();
-                    enablePlayerActions(gameState.players[0].id);
+                    if (!gameState.isGameStarted) {
+                        gameState.isGameStarted = true;
+                        addLog("游戏开始！");
+                        gameState.currentPlayerIndex = 0;
+                        updateGameInfo();
+                        renderPlayers();
+                        enablePlayerActions(gameState.players[0].id);
+                        // 游戏开始后禁用加入和开始按钮
+                        document.getElementById("join-game-btn").disabled = true;
+                        document.getElementById("start-game-btn").disabled = true;
+                    }
                     break;
                 case "castMagic":
                     handleCastMagic(data);
@@ -273,14 +303,28 @@
                 case "gameWon":
                     showWinModal(data.winner);
                     break;
+                case "playerLeft":
+                    // 移除退出的玩家
+                    gameState.players = gameState.players.filter(p => p.id !== data.playerId);
+                    addLog(`玩家 ${data.playerName} 退出游戏`);
+                    renderPlayers();
+                    updateGameInfo();
+                    // 如果退出的是当前玩家，切换到下一个
+                    if (data.playerId === gameState.players[gameState.currentPlayerIndex]?.id) {
+                        gameState.currentPlayerIndex = (gameState.currentPlayerIndex + 1) % gameState.players.length;
+                        updateGameInfo();
+                        renderPlayers();
+                    }
+                    break;
             }
         }
 
-        // 发送游戏消息
+        // 发送游戏消息（添加发送者ID）
         function sendGameMessage(type, data) {
             if (gameState.ws.readyState === WebSocket.OPEN) {
                 gameState.ws.send(JSON.stringify({
                     type: type,
+                    senderId: gameState.myPlayerId, // 添加发送者ID，用于去重
                     ...data
                 }));
             } else {
@@ -290,10 +334,25 @@
 
         // 加入游戏
         document.getElementById("join-game-btn").addEventListener("click", () => {
+            // 检查是否已创建角色
+            if (gameState.myPlayerId) {
+                addLog("你已加入游戏，不能重复加入！");
+                return;
+            }
+
+            // 检查游戏是否已开始
+            if (gameState.isGameStarted) {
+                addLog("游戏已开始，无法加入！");
+                return;
+            }
+
             const playerName = prompt("请输入你的游戏昵称：", "魔法师" + Math.floor(Math.random() * 100));
             if (!playerName) return;
 
-            gameState.myPlayerId = Date.now().toString();
+            // 生成唯一玩家ID并存储到本地
+            gameState.myPlayerId = Date.now().toString() + Math.floor(Math.random() * 1000);
+            localStorage.setItem('magicGamePlayerId', gameState.myPlayerId);
+
             const player = {
                 id: gameState.myPlayerId,
                 name: playerName,
@@ -304,36 +363,106 @@
             };
 
             // 随机分配5个咒语石（自己看不见）
+            const tempStonePool = [...gameState.stonePool]; // 复制数组避免修改原数据
             for (let i = 0; i < 5; i++) {
-                const randomIndex = Math.floor(Math.random() * gameState.stonePool.length);
-                player.stones.push(gameState.stonePool.splice(randomIndex, 1)[0]);
+                const randomIndex = Math.floor(Math.random() * tempStonePool.length);
+                player.stones.push(tempStonePool.splice(randomIndex, 1)[0]);
                 gameState.publicStones--;
             }
 
-            gameState.players.push(player);
+            // 检查是否已存在该玩家，避免重复添加
+            const existingPlayer = gameState.players.find(p => p.id === player.id);
+            if (!existingPlayer) {
+                gameState.players.push(player);
+            }
+            
             renderPlayers();
             addLog(`你以 ${playerName} 的身份加入游戏`);
             
+            // 禁用加入按钮，启用退出按钮
+            document.getElementById("join-game-btn").disabled = true;
+            document.getElementById("leave-game-btn").disabled = false;
+            
             sendGameMessage("playerJoined", { player });
             
-            if (gameState.players.length >= 2) {
+            if (gameState.players.length >= 2 && !gameState.isGameStarted) {
                 document.getElementById("start-game-btn").disabled = false;
+            }
+        });
+
+        // 退出游戏
+        document.getElementById("leave-game-btn").addEventListener("click", () => {
+            if (!gameState.myPlayerId) {
+                addLog("你还未加入游戏！");
+                return;
+            }
+
+            const confirmLeave = confirm("确定要退出游戏吗？");
+            if (!confirmLeave) return;
+
+            // 发送退出消息
+            const myPlayer = gameState.players.find(p => p.id === gameState.myPlayerId);
+            sendGameMessage("playerLeft", { 
+                playerId: gameState.myPlayerId,
+                playerName: myPlayer?.name || "未知玩家"
+            });
+
+            // 清除本地数据
+            localStorage.removeItem('magicGamePlayerId');
+            gameState.myPlayerId = null;
+            
+            // 移除自己的角色
+            gameState.players = gameState.players.filter(p => p.id !== gameState.myPlayerId);
+            
+            // 重置游戏状态
+            if (gameState.currentPlayerIndex >= gameState.players.length) {
+                gameState.currentPlayerIndex = 0;
+            }
+            
+            // 启用加入按钮，禁用退出按钮
+            document.getElementById("join-game-btn").disabled = false;
+            document.getElementById("leave-game-btn").disabled = true;
+            
+            addLog("你已退出游戏");
+            renderPlayers();
+            updateGameInfo();
+            
+            // 如果游戏已开始，切换回合
+            if (gameState.isGameStarted && gameState.players.length > 0) {
+                enablePlayerActions(gameState.players[gameState.currentPlayerIndex].id);
             }
         });
 
         // 开始游戏
         document.getElementById("start-game-btn").addEventListener("click", () => {
+            if (gameState.players.length < 2) {
+                addLog("至少需要2名玩家才能开始游戏！");
+                return;
+            }
+            
+            gameState.isGameStarted = true;
             sendGameMessage("gameStarted", {});
+            
             gameState.currentPlayerIndex = 0;
             updateGameInfo();
+            renderPlayers();
             enablePlayerActions(gameState.players[0].id);
+            
+            // 禁用加入和开始按钮
+            document.getElementById("join-game-btn").disabled = true;
+            document.getElementById("start-game-btn").disabled = true;
         });
 
         // 施放魔法
         document.getElementById("cast-btn").addEventListener("click", () => {
-            const magicNumber = parseInt(document.getElementById("magic-select").value);
+            // 检查是否是自己的回合
             const currentPlayer = gameState.players[gameState.currentPlayerIndex];
+            if (!currentPlayer || currentPlayer.id !== gameState.myPlayerId) {
+                addLog("还没到你的回合！");
+                return;
+            }
 
+            const magicNumber = parseInt(document.getElementById("magic-select").value);
             // 检查是否只能升不降
             if (magicNumber < gameState.lastCastNumber && gameState.lastCastNumber > 0) {
                 addLog(`不能施放比上一次更小的魔法！上一次是 ${gameState.lastCastNumber}`);
@@ -404,14 +533,14 @@
             switch(magicNumber) {
                 case 1: // 古代巨龙
                     gameState.players.forEach(p => {
-                        p.life--;
+                        p.life = Math.max(0, p.life - 1); // 防止生命值为负
                         addLog(`${p.name} 失去1点生命，剩余 ${p.life} 点`);
                     });
                     break;
                 case 2: // 黑暗幽灵
                     gameState.players.forEach(p => {
                         if (p.id !== caster.id) {
-                            p.life--;
+                            p.life = Math.max(0, p.life - 1);
                             addLog(`${p.name} 失去1点生命，剩余 ${p.life} 点`);
                         } else {
                             p.life++;
@@ -434,18 +563,18 @@
                 case 5: // 闪电暴风雨
                     const leftIndex = (casterIndex - 1 + gameState.players.length) % gameState.players.length;
                     const rightIndex = (casterIndex + 1) % gameState.players.length;
-                    gameState.players[leftIndex].life--;
-                    gameState.players[rightIndex].life--;
+                    gameState.players[leftIndex].life = Math.max(0, gameState.players[leftIndex].life - 1);
+                    gameState.players[rightIndex].life = Math.max(0, gameState.players[rightIndex].life - 1);
                     addLog(`${gameState.players[leftIndex].name} 和 ${gameState.players[rightIndex].name} 各失去1点生命`);
                     break;
                 case 6: // 暴风雪
                     const leftPlayerIndex = (casterIndex - 1 + gameState.players.length) % gameState.players.length;
-                    gameState.players[leftPlayerIndex].life--;
+                    gameState.players[leftPlayerIndex].life = Math.max(0, gameState.players[leftPlayerIndex].life - 1);
                     addLog(`${gameState.players[leftPlayerIndex].name} 失去1点生命，剩余 ${gameState.players[leftPlayerIndex].life} 点`);
                     break;
                 case 7: // 火球术
                     const rightPlayerIndex = (casterIndex + 1) % gameState.players.length;
-                    gameState.players[rightPlayerIndex].life--;
+                    gameState.players[rightPlayerIndex].life = Math.max(0, gameState.players[rightPlayerIndex].life - 1);
                     addLog(`${gameState.players[rightPlayerIndex].name} 失去1点生命，剩余 ${gameState.players[rightPlayerIndex].life} 点`);
                     break;
                 case 8: // 魔法药水
@@ -460,7 +589,7 @@
             addLog(`${player.name} 被击败！`);
             // 击杀者获得1分，其他存活者各获得1分
             gameState.players.forEach(p => {
-                if (p.id !== player.id) {
+                if (p.id !== player.id && p.life > 0) {
                     p.score++;
                     addLog(`${p.name} 获得1分，当前分数：${p.score}`);
                 }
@@ -469,15 +598,17 @@
 
         // 结束玩家回合
         function endPlayerTurn(playerId) {
-            const currentPlayer = gameState.players[gameState.currentPlayerIndex];
+            const currentPlayer = gameState.players.find(p => p.id === playerId);
+            if (!currentPlayer) return;
             
             // 补满咒语石
             const stonesNeeded = 5 - currentPlayer.stones.length;
             if (stonesNeeded > 0 && gameState.publicStones > 0) {
+                const tempStonePool = [...gameState.stonePool];
                 const stonesToAdd = Math.min(stonesNeeded, gameState.publicStones);
                 for (let i = 0; i < stonesToAdd; i++) {
-                    const randomIndex = Math.floor(Math.random() * gameState.stonePool.length);
-                    currentPlayer.stones.push(gameState.stonePool.splice(randomIndex, 1)[0]);
+                    const randomIndex = Math.floor(Math.random() * tempStonePool.length);
+                    currentPlayer.stones.push(tempStonePool.splice(randomIndex, 1)[0]);
                     gameState.publicStones--;
                 }
                 addLog(`${currentPlayer.name} 补充了 ${stonesToAdd} 个咒语石`);
@@ -488,15 +619,26 @@
             // 重置最后施法数字
             gameState.lastCastNumber = 0;
             
-            // 切换到下一个玩家
-            gameState.currentPlayerIndex = (gameState.currentPlayerIndex + 1) % gameState.players.length;
-            const nextPlayer = gameState.players[gameState.currentPlayerIndex];
+            // 切换到下一个存活的玩家
+            let nextIndex = (gameState.currentPlayerIndex + 1) % gameState.players.length;
+            // 跳过已死亡的玩家
+            while (gameState.players[nextIndex]?.life <= 0 && gameState.players.some(p => p.life > 0)) {
+                nextIndex = (nextIndex + 1) % gameState.players.length;
+            }
+            gameState.currentPlayerIndex = nextIndex;
             
-            addLog(`回合结束，现在是 ${nextPlayer.name} 的回合`);
+            const nextPlayer = gameState.players[gameState.currentPlayerIndex];
+            if (nextPlayer) {
+                addLog(`回合结束，现在是 ${nextPlayer.name} 的回合`);
+            } else {
+                addLog("没有可用的玩家了！");
+            }
             
             // 禁用当前玩家操作，启用下一个玩家操作
             disableAllPlayerActions();
-            enablePlayerActions(nextPlayer.id);
+            if (nextPlayer) {
+                enablePlayerActions(nextPlayer.id);
+            }
             
             updateGameInfo();
             renderPlayers();
@@ -506,12 +648,13 @@
 
         // 检查胜利条件
         function checkWinCondition() {
-            const winner = gameState.players.find(p => p.score >= 8);
+            const winner = gameState.players.find(p => p.score >= 8 && p.life > 0);
             if (winner) {
                 addLog(`${winner.name} 获得8分！赢得游戏胜利！`);
                 sendGameMessage("gameWon", { winner: winner.name });
                 showWinModal(winner.name);
                 disableAllPlayerActions();
+                gameState.isGameStarted = false;
             }
         }
 
@@ -523,12 +666,19 @@
 
         // 重新开始游戏
         document.getElementById("restart-btn").addEventListener("click", () => {
+            // 清除本地存储
+            localStorage.removeItem('magicGamePlayerId');
+            // 刷新页面重置所有状态
             location.reload();
         });
 
         // 结束回合按钮
         document.getElementById("end-turn-btn").addEventListener("click", () => {
             const currentPlayer = gameState.players[gameState.currentPlayerIndex];
+            if (!currentPlayer || currentPlayer.id !== gameState.myPlayerId) {
+                addLog("还没到你的回合！");
+                return;
+            }
             endPlayerTurn(currentPlayer.id);
         });
 
@@ -540,15 +690,16 @@
             gameState.players.forEach((player, index) => {
                 const isCurrentPlayer = index === gameState.currentPlayerIndex;
                 const isMyPlayer = player.id === gameState.myPlayerId;
+                const isDead = player.life <= 0;
 
                 const playerCard = document.createElement("div");
-                playerCard.className = `player-card ${isCurrentPlayer ? "active" : ""}`;
+                playerCard.className = `player-card ${isCurrentPlayer ? "active" : ""} ${isDead ? "dead" : ""}`;
                 playerCard.innerHTML = `
-                    <h3>${player.name} ${isCurrentPlayer ? "(当前回合)" : ""}</h3>
+                    <h3>${player.name} ${isCurrentPlayer ? "(当前回合)" : ""} ${isDead ? "(已淘汰)" : ""}</h3>
                     <p>生命: ${player.life} | 分数: ${player.score}</p>
                     <div class="spell-stones">
                         ${player.stones.map(stone => `
-                            <div class="stone ${isMyPlayer ? "unknown" : ""}">
+                            <div class="stone ${isMyPlayer ? "unknown" : ""} ${isDead ? "used" : ""}">
                                 ${isMyPlayer ? "?" : stone}
                             </div>
                         `).join("")}
@@ -560,12 +711,17 @@
 
                 playerListEl.appendChild(playerCard);
             });
+
+            // 如果没有玩家，显示提示
+            if (gameState.players.length === 0) {
+                playerListEl.innerHTML = '<div style="text-align:center; padding:20px;">暂无玩家，请点击"加入游戏"开始</div>';
+            }
         }
 
         // 更新游戏信息
         function updateGameInfo() {
             document.getElementById("current-player").textContent = 
-                gameState.currentPlayerIndex >= 0 ? 
+                gameState.currentPlayerIndex >= 0 && gameState.players[gameState.currentPlayerIndex] ? 
                 gameState.players[gameState.currentPlayerIndex].name : "无";
             
             document.getElementById("public-stones").textContent = gameState.publicStones;
@@ -576,7 +732,7 @@
 
         // 启用玩家操作
         function enablePlayerActions(playerId) {
-            if (playerId === gameState.myPlayerId) {
+            if (playerId === gameState.myPlayerId && gameState.isGameStarted) {
                 document.getElementById("magic-select").disabled = false;
                 document.getElementById("cast-btn").disabled = false;
                 document.getElementById("end-turn-btn").disabled = false;
@@ -604,10 +760,23 @@
         // 初始化
         window.onload = () => {
             initWebSocket();
+            // 初始化按钮状态
+            document.getElementById("leave-game-btn").disabled = !gameState.myPlayerId;
+            document.getElementById("join-game-btn").disabled = gameState.myPlayerId;
             renderPlayers();
             updateGameInfo();
         };
+
+        // 页面关闭时清理
+        window.onbeforeunload = () => {
+            if (gameState.myPlayerId) {
+                const myPlayer = gameState.players.find(p => p.id === gameState.myPlayerId);
+                sendGameMessage("playerLeft", { 
+                    playerId: gameState.myPlayerId,
+                    playerName: myPlayer?.name || "未知玩家"
+                });
+            }
+        };
     </script>
 </body>
-
 </html>
